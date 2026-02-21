@@ -176,6 +176,8 @@ def chat_endpoint(request: ChatRequest):
         Use the Context below AND the Conversation History to answer questions. 
         If a user asks a factual question about Clearpath and the answer is NOT in the Context or History, you must say exactly: "I don't have enough information to answer that."
         
+        CRITICAL INSTRUCTION: DO NOT ever print, repeat, or summarize the "Conversation History" in your output. Just answer the user's latest question directly and conversationally.
+        
         Example 1 (Missing Fact):
         User: What is the cost of the Enterprise plan?
         Context: [No pricing info]
