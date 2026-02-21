@@ -135,7 +135,6 @@ def chat_endpoint(request: ChatRequest):
             print(f"\n[QUERY REWRITER] Translated: '{current_query}'  =>  '{search_query}'")
         except Exception:
             pass # Fallback to original query
-            
     # 1. Route the query (using the original question)
     model_name = route_query(current_query)
     
@@ -206,6 +205,7 @@ def chat_endpoint(request: ChatRequest):
                 model=model_name,
                 temperature=0.2, # Low temp for more factual answers
                 stream=True
+
             )
             
             full_response = ""
