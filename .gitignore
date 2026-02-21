@@ -1,0 +1,28 @@
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Database
+chroma_db/
+
+# Logs and debug files
+*.log
+server.log
+eval_output.txt
+
+# OS Generated
+.DS_Store
+Thumbs.db
+
+# Documents (Temporary)
+written_answers.md

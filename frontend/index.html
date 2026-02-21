@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clearpath Support Chatbot</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f9;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .chat-container {
+            width: 100%;
+            max-width: 600px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .header {
+            background: #007bff;
+            color: white;
+            padding: 15px;
+            text-align: center;
+            font-weight: bold;
+        }
+
+        .messages {
+            flex: 1;
+            min-height: 400px;
+            max-height: 500px;
+            overflow-y: auto;
+            padding: 15px;
+            background: #fafafa;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            padding: 12px;
+            border-radius: 8px;
+            max-width: 80%;
+            line-height: 1.4;
+        }
+
+        .message.user {
+            background: #e0f7fa;
+            align-self: flex-end;
+            margin-left: auto;
+            border-bottom-right-radius: 0;
+        }
+
+        .message.bot {
+            background: #e8eaf6;
+            align-self: flex-start;
+            margin-right: auto;
+            border-bottom-left-radius: 0;
+        }
+
+        .error-label {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeeba;
+            padding: 8px;
+            font-size: 13px;
+            margin-top: 10px;
+            border-radius: 4px;
+            font-weight: bold;
+            display: block;
+        }
+
+        .input-area {
+            display: flex;
+            padding: 15px;
+            border-top: 1px solid #ddd;
+            background: white;
+        }
+
+        .input-area input {
+            flex: 1;
+            padding: 12px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            margin-right: 10px;
+            font-size: 14px;
+        }
+
+        .input-area button {
+            padding: 12px 20px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        .input-area button:hover {
+            background: #0056b3;
+        }
+
+        .debug-panel {
+            background: #222;
+            color: #0f0;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            padding: 15px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            border-top: 2px solid #555;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="chat-container">
+        <div class="header">Clearpath Support</div>
+        <div class="messages" id="messages"></div>
+        <div class="input-area">
+            <input type="text" id="userInput" placeholder="Ask a question..." onkeypress="handleEnter(event)">
+            <button onclick="sendMessage()">Send</button>
+        </div>
+        <div class="debug-panel" id="debugPanel">
+            [Debug Info will appear here]
+        </div>
+    </div>
+
+    <script>
+        // --- CONVERSATION MEMORY ---
+        // We store the chat history here to keep the backend completely stateless
+        let chatHistory = [];
+
+        async function sendMessage() {
+            const inputField = document.getElementById("userInput");
+            const query = inputField.value.trim();
+            if (!query) return;
+
+            addMessage(query, 'user');
+            inputField.value = "";
+
+            // Add user message to history
+            chatHistory.push({ role: "user", content: query });
+
+            // Sliding Window: Keep only the last 4 messages to save on token costs
+            if (chatHistory.length > 4) {
+                chatHistory = chatHistory.slice(-4);
+            }
+
+            document.getElementById("debugPanel").innerText = "Thinking...";
+
+            try {
+                // Send the entire conversation history to our FastAPI backend
+                const response = await fetch("/chat", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ messages: chatHistory })
+                });
+
+                if (!response.ok) {
+                    throw new Error("Network response was not ok");
+                }
+
+                // Create an empty bot message bubble immediately
+                const msgDiv = document.createElement("div");
+                msgDiv.className = "message bot";
+                document.getElementById("messages").appendChild(msgDiv);
+
+                // Setup the stream reader
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let botFullText = "";
+                let debugInfo = null;
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value, { stream: true });
+                    const lines = chunk.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const dataStr = line.replace('data: ', '');
+                            try {
+                                const parsed = JSON.parse(dataStr);
+                                if (parsed.content) {
+                                    botFullText += parsed.content;
+
+                                    // Print instantly to screen without doing heavy Markdown parsing yet!
+                                    // Just replace basic newlines so the text doesn't collapse
+                                    let displayHtml = botFullText.replace(/\n/g, '<br>');
+
+                                    msgDiv.innerHTML = displayHtml;
+                                    document.getElementById("messages").scrollTop = document.getElementById("messages").scrollHeight;
+                                } else if (parsed.trailing_eval) {
+                                    // We caught the secret trailing payload!
+                                    debugInfo = parsed.trailing_eval;
+                                }
+                            } catch (e) {
+                                // Ignore split JSON chunks
+                            }
+                        }
+                    }
+                }
+
+                // Stream is completely finished. Now run the Evaluation UI update!
+                // First, do the heavy Markdown parsing now that all text has arrived
+                let finalHtml = botFullText;
+                finalHtml = finalHtml.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+                finalHtml = finalHtml.replace(/\n\d+\.\s/g, (match) => '<br><b>' + match.trim() + '</b> ');
+                finalHtml = finalHtml.replace(/\n-\s/g, '<br>• ');
+                finalHtml = finalHtml.replace(/\n/g, '<br>');
+
+                msgDiv.innerHTML = finalHtml;
+
+                // Then, inject the yellow UI warning flag if it was triggered
+                if (debugInfo && debugInfo.evaluator_flags && debugInfo.evaluator_flags.length > 0) {
+                    msgDiv.innerHTML += `<div class="error-label">⚠️ Low confidence — please verify with support.</div>`;
+                    document.getElementById("messages").scrollTop = document.getElementById("messages").scrollHeight;
+                }
+
+                // Add bot's final text answer back into the memory array
+                chatHistory.push({ role: "assistant", content: botFullText });
+
+                // Update the debug panel exactly as requested
+                if (debugInfo) {
+                    const flagsStr = debugInfo.evaluator_flags.length > 0 ? debugInfo.evaluator_flags.join(', ') : 'None';
+                    const debugStr = `Model: ${debugInfo.model_used}\nTokens (In/Out): N/A (Stream Mode)\nLatency: ${debugInfo.latency_ms}ms\nEvaluator Flags: ${flagsStr}`;
+                    document.getElementById("debugPanel").innerText = debugStr;
+                }
+
+            } catch (err) {
+                addMessage("Failed to connect to server.", 'bot');
+                document.getElementById("debugPanel").innerText = "Connection failed. Is the Python server running?";
+            }
+        }
+
+        function addMessage(text, sender, isHTML = false) {
+            const msgDiv = document.createElement("div");
+            msgDiv.className = `message ${sender}`;
+            if (isHTML) {
+                msgDiv.innerHTML = text;
+            } else {
+                msgDiv.innerText = text;
+            }
+            document.getElementById("messages").appendChild(msgDiv);
+            document.getElementById("messages").scrollTop = document.getElementById("messages").scrollHeight;
+        }
+
+        function handleEnter(e) {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        }
+    </script>
+
+</body>
+
+</html>
