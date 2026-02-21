@@ -71,11 +71,7 @@ def evaluate_output(query: str, response: str, retrieved_chunks_used: int, conte
     flags = []
     resp_lower = response.lower()
     
-    # Check 1: No-context response
-    if retrieved_chunks_used == 0:
-        flags.append("No context retrieved for this query.")
-        
-    # Check 2: Refusals
+    # Check 1: Refusals
     refusal_keywords = [
         "i cannot", "i can't", "i don't know", "i do not know", 
         "as an ai", "i'm sorry, but", "i am sorry, but",
@@ -84,6 +80,12 @@ def evaluate_output(query: str, response: str, retrieved_chunks_used: int, conte
     is_refusal = any(kw in resp_lower for kw in refusal_keywords)
     if is_refusal:
         flags.append("Model refused to answer or indicated lack of knowledge.")
+        
+    # Check 2: No-context response for factual queries
+    # If no context was retrieved AND it's not a refusal AND it's not small talk, we might want to flag it. 
+    # But since we use Few-Shot to allow small talk, let's just only flag "No Context" if they asked a complex question.
+    if retrieved_chunks_used == 0 and is_complex:
+        flags.append("No context retrieved for this complex query.")
         
     # Check 3: Groundedness / Overlap Check 
     # ONLY run this if it's a Complex query AND it's not a known Refusal
