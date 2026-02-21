@@ -81,15 +81,15 @@ def evaluate_output(query: str, response: str, retrieved_chunks_used: int, conte
     if is_refusal:
         flags.append("Model refused to answer or indicated lack of knowledge.")
         
-    # Check 2: No-context response for factual queries
-    # If no context was retrieved AND it's not a refusal AND it's not small talk, we might want to flag it. 
-    # But since we use Few-Shot to allow small talk, let's just only flag "No Context" if they asked a complex question.
-    if retrieved_chunks_used == 0 and is_complex:
-        flags.append("No context retrieved for this complex query.")
+    # Check 2: No-context response
+    if retrieved_chunks_used == 0 and not is_refusal:
+        # Only flag if the response is long enough to be a real answer (not a greeting)
+        if len(response.split()) > 15:
+            flags.append("No context retrieved but model gave a long answer. Possible hallucination.")
         
     # Check 3: Groundedness / Overlap Check 
-    # ONLY run this if it's a Complex query AND it's not a known Refusal
-    if is_complex and not is_refusal:
+    # Run this for ALL non-trivial responses to catch hallucinations from pre-trained knowledge
+    if not is_refusal and len(response.split()) > 15:
         words_in_response = set(re.findall(r'\b[a-z]{6,}\b', resp_lower))
         if words_in_response and context:
             context_lower = context.lower()
@@ -171,26 +171,24 @@ def chat_endpoint(request: ChatRequest):
     system_prompt = {
         "role": "system",
         "content": f"""
-        You are the Clearpath Customer Support AI. You are friendly and conversational.
+        You are the Clearpath Customer Support AI.
         
-        RULE 1 - CONVERSATION FIRST: If the user's message is a casual follow-up, greeting, confirmation, or opinion (like "thanks", "are you sure?", "ok", "hello", "is this correct?", "great"), just respond naturally and conversationally. Do NOT refuse. Do NOT say "I don't have enough information." These are NOT factual questions.
+        STRICT RULE: You must ONLY answer using the Context provided below and the Conversation History. You must NEVER use your own general knowledge about any product, company, or topic. If the answer is not in the Context or History, say exactly: "I don't have enough information to answer that."
         
-        RULE 2 - FACTUAL ANSWERS: For factual questions about Clearpath, use the Context below and Conversation History to answer.
-        
-        RULE 3 - MISSING FACTS: ONLY if the user asks a specific factual question about Clearpath (like names, dates, features) and the answer is NOT in the Context or History, say: "I don't have enough information to answer that."
+        The ONLY exception is for simple greetings and confirmations (like "hello", "thanks", "are you sure?"). For those, respond naturally without refusing.
         
         NEVER print, repeat, or summarize the Conversation History in your output.
         
-        Example 1 (Casual follow-up — just respond naturally):
+        Example 1 (Greeting — respond naturally):
         User: Are you sure this is correct?
         You: Yes, absolutely! The information I provided is based on the official Clearpath documentation.
         
-        Example 2 (Casual follow-up — just respond naturally):
-        User: Thanks, that helps!
-        You: You're welcome! Let me know if you have any other questions.
+        Example 2 (Factual question answered from Context):
+        User: What features are in the Pro plan?
+        You: The Pro plan includes [features from Context].
         
-        Example 3 (Missing Fact — refuse politely):
-        User: Who is the CEO of Clearpath?
+        Example 3 (Question NOT answerable from Context — must refuse):
+        User: How does Clearpath compare to Jira?
         You: I don't have enough information to answer that.
         
         Context:
