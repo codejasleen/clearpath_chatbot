@@ -97,8 +97,12 @@ def evaluate_output(query: str, response: str, retrieved_chunks_used: int, conte
             overlap_count = sum(1 for word in words_in_response if word in context_lower)
             overlap_ratio = overlap_count / len(words_in_response)
             
-            # If less than 50% of the significant words came from the context, it's very likely hallucinating
-            if overlap_ratio < 0.5:
+            # Two-tier threshold:
+            # Complex queries (70B) = strict 50% (long answers should closely match docs)
+            # Simple queries (8B) = lenient 20% (short paraphrased answers are fine, but 0% overlap = hallucination)
+            threshold = 0.5 if is_complex else 0.2
+            
+            if overlap_ratio < threshold:
                 flags.append(f"Warning: Low groundedness score ({overlap_ratio:.0%}). Possible hallucination detected.")
         
     return flags
