@@ -140,7 +140,7 @@ def retrieve_context(query, top_k=3):
         
         # Filter out chunks below a minimum relevance score
         # This ensures truly off-topic queries (e.g. "What is Kubernetes?") return 0 chunks
-        RELEVANCE_THRESHOLD = 0.1
+        RELEVANCE_THRESHOLD = 1.0
         relevant_results = [(s, d, m) for s, d, m in scored_results if s >= RELEVANCE_THRESHOLD]
         best_results = relevant_results[:top_k]
         

@@ -79,13 +79,13 @@ def evaluate_output(query: str, response: str, retrieved_chunks_used: int, conte
     ]
     is_refusal = any(kw in resp_lower for kw in refusal_keywords)
     if is_refusal:
-        flags.append("Model refused to answer or indicated lack of knowledge.")
+        flags.append("[REFUSAL] Model refused to answer or indicated lack of knowledge.")
         
     # Check 2: No-context response
     if retrieved_chunks_used == 0 and not is_refusal:
         # Only flag if the response is long enough to be a real answer (not a greeting)
         if len(response.split()) > 15:
-            flags.append("No context retrieved but model gave a long answer. Possible hallucination.")
+            flags.append("[NO_CONTEXT] No relevant documents found, but model answered from general knowledge.")
         
     # Check 3: Groundedness / Overlap Check 
     # Run this for ALL non-trivial responses to catch hallucinations from pre-trained knowledge
@@ -103,7 +103,7 @@ def evaluate_output(query: str, response: str, retrieved_chunks_used: int, conte
             threshold = 0.5 if is_complex else 0.2
             
             if overlap_ratio < threshold:
-                flags.append(f"Warning: Low groundedness score ({overlap_ratio:.0%}). Possible hallucination detected.")
+                flags.append(f"[LOW_GROUNDING] Response has low overlap with retrieved docs ({overlap_ratio:.0%}). Possible hallucination.")
         
     return flags
 

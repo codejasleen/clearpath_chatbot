@@ -225,7 +225,27 @@
 
                 // Then, inject the yellow UI warning flag if it was triggered
                 if (debugInfo && debugInfo.evaluator_flags && debugInfo.evaluator_flags.length > 0) {
-                    msgDiv.innerHTML += `<div class="error-label">⚠️ Low confidence — please verify with support.</div>`;
+                    for (const flag of debugInfo.evaluator_flags) {
+                        let labelText = "⚠️ Low confidence — please verify with support.";
+                        let labelColor = "#fff3cd"; // default yellow
+                        let textColor = "#856404";
+
+                        if (flag.includes("[REFUSAL]")) {
+                            labelText = "🚫 Model could not answer — no relevant information found.";
+                            labelColor = "#ffe0cc";
+                            textColor = "#d35400";
+                        } else if (flag.includes("[NO_CONTEXT]")) {
+                            labelText = "⚠️ Unverified — answered from general knowledge, not Clearpath docs.";
+                            labelColor = "#f8d7da";
+                            textColor = "#721c24";
+                        } else if (flag.includes("[LOW_GROUNDING]")) {
+                            labelText = "⚠️ Low grounding — response may not match retrieved documents.";
+                            labelColor = "#fff3cd";
+                            textColor = "#856404";
+                        }
+
+                        msgDiv.innerHTML += `<div class="error-label" style="background:${labelColor};color:${textColor};border-color:${labelColor};">${labelText}</div>`;
+                    }
                     document.getElementById("messages").scrollTop = document.getElementById("messages").scrollHeight;
                 }
 
