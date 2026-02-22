@@ -225,7 +225,19 @@
 
                 // Then, inject the yellow UI warning flag if it was triggered
                 if (debugInfo && debugInfo.evaluator_flags && debugInfo.evaluator_flags.length > 0) {
-                    msgDiv.innerHTML += `<div class="error-label">⚠️ Low confidence — please verify with support.</div>`;
+                    for (const flag of debugInfo.evaluator_flags) {
+                        let labelText = "⚠️ Low confidence — please verify with support.";
+                        let labelColor = "#fff3cd"; // default yellow
+                        let textColor = "#856404";
+
+                        if (flag.includes("[REFUSAL]") || flag.includes("[NO_CONTEXT]")) {
+                            labelText = "⚠️ Low confidence — please verify with support.";
+                        } else if (flag.includes("[LOW_GROUNDING]")) {
+                            labelText = "⚠️ Low context - might be hallucination. Please verify.";
+                        }
+
+                        msgDiv.innerHTML += `<div class="error-label" style="background:${labelColor};color:${textColor};border-color:${labelColor};">${labelText}</div>`;
+                    }
                     document.getElementById("messages").scrollTop = document.getElementById("messages").scrollHeight;
                 }
 

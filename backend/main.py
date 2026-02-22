@@ -63,7 +63,7 @@ def route_query(query: str) -> str:
         return "llama-3.1-8b-instant"
 
 # --- LAYER 3: OUTPUT EVALUATOR ---
-def evaluate_output(query: str, response: str, retrieved_chunks_used: int) -> list:
+def evaluate_output(query: str, response: str, retrieved_chunks_used: int, context: str, is_complex: bool) -> list:
     """
     Evaluates the LLM output for potential issues.
     Returns a list of flags (strings).
@@ -86,6 +86,22 @@ def evaluate_output(query: str, response: str, retrieved_chunks_used: int) -> li
         # Only flag if the response is long enough to be a real answer (not a greeting)
         if len(response.split()) > 15:
             flags.append("[NO_CONTEXT] No relevant documents found, but model answered from general knowledge.")
+            
+    # Check 3: Groundedness / Overlap Check 
+    # Catch partial hallucinations (e.g. asking about Jira when only Clearpath is in docs)
+    if not is_refusal and len(response.split()) > 15:
+        words_in_response = set(re.findall(r'\b[a-z]{6,}\b', resp_lower))
+        if words_in_response and context:
+            context_lower = context.lower()
+            # Count how many of these long words actually appear in the retrieved context
+            overlap_count = sum(1 for word in words_in_response if word in context_lower)
+            overlap_ratio = overlap_count / len(words_in_response)
+            
+            # User requested 60% threshold for complex queries
+            threshold = 0.6 if is_complex else 0.2
+            
+            if overlap_ratio < threshold:
+                flags.append(f"[LOW_GROUNDING] Response has low overlap with retrieved docs ({overlap_ratio:.0%}). Possible hallucination.")
         
     return flags
 
@@ -214,7 +230,8 @@ def chat_endpoint(request: ChatRequest):
             # --- THE TRAILING PAYLOAD ---
             # The LLM is done streaming. We now have the complete sentence in memory.
             # We can safely run our Evaluator function on the full response!
-            eval_flags = evaluate_output(current_query, full_response, chunks_retrieved)
+            is_complex_route = (model_name == 'llama-3.3-70b-versatile')
+            eval_flags = evaluate_output(current_query, full_response, chunks_retrieved, context, is_complex_route)
             
             latency = round((time.time() - start_time) * 1000, 2)
             
