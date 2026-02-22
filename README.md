@@ -66,10 +66,20 @@ This project utilizes two models via the Groq API. Queries are routed dynamicall
 
 ## Bonus Challenges Attempted
 
-1. **Conversational Memory with Query Condensation:** Implemented an active sliding-window memory (last 4 messages) managed by a backend session dictionary. Importantly, to make this work with the vector database, I implemented a **Query Condensation Layer** using the 8B model. It intercepts follow-up questions containing pronouns (e.g., "Are you sure about it?") and rewrites them into standalone search queries before hitting ChromaDB.
-2. **Advanced Two-Stage Retrieval (Reranking):** Upgraded from standard dense retrieval to a two-stage pipeline. ChromaDB first fetches the top 15 chunks using `all-MiniLM-L6-v2`, and then a powerful Neural **Cross-Encoder model** (`ms-marco-MiniLM-L-6-v2`) reranks them mathematically, returning only the top 3 most precisely relevant chunks. I also tuned the negative logits threshold to allow for typo tolerance.
-3. **Lexical Grounding Evaluator:** Built a custom algorithmic hallucination checker. Before returning the final answer, the system extracts all long nouns from the LLM's response and verifies that at least 50% of them actually exist in the retrieved PDF chunks. If an LLM hallucinates new features not found in the manuals, it perfectly flags the output with `low_grounding`.
-4. **AWS Deployment:** Fully deployed the backend and frontend on an AWS EC2 instance.
+According to the optional Bonus Challenges rubric, the following three challenges were successfully implemented:
+
+1. **Conversation memory:** The chatbot maintains conversation memory across turns. This is implemented via an active sliding-window memory (last 4 messages) managed by a backend session dictionary (`CONVERSATIONS`). A *Query Condensation Layer* using the 8B model was also implemented to rewrite pronoun-heavy follow-up questions before hitting the vector database.
+2. **Eval harness:** A dedicated `eval_harness.py` test suite was written. It contains a dozen test queries covering factual retrieval, out-of-bounds questions, and competitor mentions. Running `python backend/eval_harness.py` automatically evaluates the system against these expected answers and reports Pass/Fail for each.
+3. **Live deploy:** The full backend and frontend stack was deployed to a business-grade cloud provider (AWS EC2) and is accessible via a public URL interface.
+
+---
+
+## Additional Self-Improved Features
+
+Beyond the assignment rubric, several advanced RAG concepts were engineered to ensure production-grade reliability:
+
+1. **Advanced Two-Stage Retrieval (Reranking):** Upgraded from standard dense retrieval to a two-stage pipeline. ChromaDB first fetches the top 15 chunks using `all-MiniLM-L6-v2`, and then a powerful Neural **Cross-Encoder model** (`ms-marco-MiniLM-L-6-v2`) reranks them mathematically, returning only the top 3 most precisely relevant chunks. I also tuned the negative logits threshold to allow for typo tolerance.
+2. **Lexical Grounding Flagging:** Built a custom algorithmic hallucination checker. Before returning the final answer, the system extracts all long nouns from the LLM's response and verifies that at least 50% of them actually exist in the retrieved PDF chunks. If an LLM hallucinates new features not found in the manuals, it perfectly flags the output with `low_grounding`.
 
 ---
 
