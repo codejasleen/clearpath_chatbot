@@ -64,6 +64,5 @@ This project utilizes two models via the Groq API, selected dynamically by the `
 
 ## Known Limitations & Missing Features
 
-1.  **Conversational Memory (Statelessness):** The system currently does not retain context from previous turns in the conversation. Each query is treated as an isolated event. Asking "How do I do X?" followed by "What about Y?" will fail because the model loses the context of "X".
-2.  **Streaming Answers:** Streaming was not implemented; the user must wait for the entire generation process (retrieval + LLM inference) to finish before seeing the response.
-3.  **Basic Embedding Model:** We use a small, dense embedding model (`all-MiniLM-L6-v2`). While fast and local, it relies heavily on semantic similarity and can miss exact keyword matches. A combination of dense and sparse vectors (Hybrid search via BM25) would drastically improve retrieval accuracy for hyper-specific UI button names or error codes.
+1.  **Streaming Answers:** Streaming was not implemented; the user must wait for the entire generation process (retrieval + LLM inference) to finish before seeing the response.
+
