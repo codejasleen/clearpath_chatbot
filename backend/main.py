@@ -209,42 +209,34 @@ def chat_endpoint(request: ChatRequest):
     for msg in request.messages:
         full_conversation_history.append({"role": msg.role, "content": msg.content})
     
-    # 5. Call LLM with the full history and STREAM it
+    # 5. Call LLM with the full history Non-Streaming
     try:
-        def generate():
-            chat_completion = client.chat.completions.create(
-                messages=full_conversation_history,
-                model=model_name,
-                temperature=0.2, # Low temp for more factual answers
-                stream=True
-
-            )
-            
-            full_response = ""
-            for chunk in chat_completion:
-                content = chunk.choices[0].delta.content
-                if content:
-                    full_response += content
-                    # Send each token instantly via SSE
-                    yield f"data: {json.dumps({'content': content})}\n\n"
-                    
-            # --- THE TRAILING PAYLOAD ---
-            # The LLM is done streaming. We now have the complete sentence in memory.
-            # We can safely run our Evaluator function on the full response!
-            is_complex_route = (model_name == 'llama-3.3-70b-versatile')
-            eval_flags = evaluate_output(current_query, full_response, chunks_retrieved, context, is_complex_route)
-            
-            latency = round((time.time() - start_time) * 1000, 2)
-            
-            # Send the secret trailing JSON payload to trigger the UI flag!
-            debug_info = {
-                "evaluator_flags": eval_flags,
-                "model_used": model_name,
-                "latency_ms": latency
-            }
-            yield f"data: {json.dumps({'trailing_eval': debug_info})}\n\n"
-            
-        return StreamingResponse(generate(), media_type="text/event-stream")
+        chat_completion = client.chat.completions.create(
+            messages=full_conversation_history,
+            model=model_name,
+            temperature=0.2, # Low temp for more factual answers
+            stream=False
+        )
         
+        full_response = chat_completion.choices[0].message.content
+        
+        # We can safely run our Evaluator function on the full response!
+        is_complex_route = (model_name == 'llama-3.3-70b-versatile')
+        eval_flags = evaluate_output(current_query, full_response, chunks_retrieved, context, is_complex_route)
+        
+        latency = round((time.time() - start_time) * 1000, 2)
+        
+        debug_info = {
+            "evaluator_flags": eval_flags,
+            "model_used": model_name,
+            "latency_ms": latency,
+            "tokens": f"In: {chat_completion.usage.prompt_tokens} / Out: {chat_completion.usage.completion_tokens}" if hasattr(chat_completion, 'usage') else "N/A"
+        }
+        
+        return {
+            "content": full_response,
+            "trailing_eval": debug_info
+        }
+
     except Exception as e:
         return {"error": str(e)}

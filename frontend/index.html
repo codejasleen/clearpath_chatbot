@@ -175,46 +175,18 @@
                 msgDiv.className = "message bot";
                 document.getElementById("messages").appendChild(msgDiv);
 
-                // Setup the stream reader
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-                let botFullText = "";
-                let debugInfo = null;
+                const responseData = await response.json();
 
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-
-                    const chunk = decoder.decode(value, { stream: true });
-                    const lines = chunk.split('\n');
-
-                    for (const line of lines) {
-                        if (line.startsWith('data: ')) {
-                            const dataStr = line.replace('data: ', '');
-                            try {
-                                const parsed = JSON.parse(dataStr);
-                                if (parsed.content) {
-                                    botFullText += parsed.content;
-
-                                    // Print instantly to screen without doing heavy Markdown parsing yet!
-                                    // Just replace basic newlines so the text doesn't collapse
-                                    let displayHtml = botFullText.replace(/\n/g, '<br>');
-
-                                    msgDiv.innerHTML = displayHtml;
-                                    document.getElementById("messages").scrollTop = document.getElementById("messages").scrollHeight;
-                                } else if (parsed.trailing_eval) {
-                                    // We caught the secret trailing payload!
-                                    debugInfo = parsed.trailing_eval;
-                                }
-                            } catch (e) {
-                                // Ignore split JSON chunks
-                            }
-                        }
-                    }
+                if (responseData.error) {
+                    addMessage(responseData.error, 'bot');
+                    document.getElementById("debugPanel").innerText = "Error from server.";
+                    return;
                 }
 
-                // Stream is completely finished. Now run the Evaluation UI update!
-                // First, do the heavy Markdown parsing now that all text has arrived
+                let botFullText = responseData.content || "";
+                let debugInfo = responseData.trailing_eval;
+
+                // Do the heavy Markdown parsing now that all text has arrived instantly
                 let finalHtml = botFullText;
                 finalHtml = finalHtml.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
                 finalHtml = finalHtml.replace(/\n\d+\.\s/g, (match) => '<br><b>' + match.trim() + '</b> ');
@@ -247,7 +219,7 @@
                 // Update the debug panel exactly as requested
                 if (debugInfo) {
                     const flagsStr = debugInfo.evaluator_flags.length > 0 ? debugInfo.evaluator_flags.join(', ') : 'None';
-                    const debugStr = `Model: ${debugInfo.model_used}\nTokens (In/Out): N/A (Stream Mode)\nLatency: ${debugInfo.latency_ms}ms\nEvaluator Flags: ${flagsStr}`;
+                    const debugStr = `Model: ${debugInfo.model_used}\nTokens (In/Out): ${debugInfo.tokens || "N/A"}\nLatency: ${debugInfo.latency_ms}ms\nEvaluator Flags: ${flagsStr}`;
                     document.getElementById("debugPanel").innerText = debugStr;
                 }
 
