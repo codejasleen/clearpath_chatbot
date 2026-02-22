@@ -137,7 +137,12 @@ def retrieve_context(query, top_k=3):
         scores = reranker_model.predict(cross_input)
         
         scored_results = sorted(zip(scores, retrieved_docs, retrieved_metadatas), key=lambda x: x[0], reverse=True)
-        best_results = scored_results[:top_k]
+        
+        # Filter out chunks below a minimum relevance score
+        # This ensures truly off-topic queries (e.g. "What is Kubernetes?") return 0 chunks
+        RELEVANCE_THRESHOLD = 0.1
+        relevant_results = [(s, d, m) for s, d, m in scored_results if s >= RELEVANCE_THRESHOLD]
+        best_results = relevant_results[:top_k]
         
         formatted_chunks = []
         final_metadata = []
