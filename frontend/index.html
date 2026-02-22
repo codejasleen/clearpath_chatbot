@@ -138,7 +138,7 @@
     <script>
         // --- CONVERSATION MEMORY ---
         // We store the chat history here to keep the backend completely stateless
-        let chatHistory = [];
+        let currentConversationId = null;
 
         async function sendMessage() {
             const inputField = document.getElementById("userInput");
@@ -148,22 +148,19 @@
             addMessage(query, 'user');
             inputField.value = "";
 
-            // Add user message to history
-            chatHistory.push({ role: "user", content: query });
-
-            // Sliding Window: Keep only the last 4 messages to save on token costs
-            if (chatHistory.length > 4) {
-                chatHistory = chatHistory.slice(-4);
-            }
-
             document.getElementById("debugPanel").innerText = "Thinking...";
 
             try {
-                // Send the entire conversation history to our FastAPI backend
-                const response = await fetch("/chat", {
+                // Send the required JSON payload to our FastAPI backend
+                const payload = { question: query };
+                if (currentConversationId) {
+                    payload.conversation_id = currentConversationId;
+                }
+
+                const response = await fetch("/query", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ messages: chatHistory })
+                    body: JSON.stringify(payload)
                 });
 
                 if (!response.ok) {
@@ -183,8 +180,14 @@
                     return;
                 }
 
-                let botFullText = responseData.content || "";
-                let debugInfo = responseData.trailing_eval;
+                // Save the conversation ID for the next turn
+                if (responseData.conversation_id) {
+                    currentConversationId = responseData.conversation_id;
+                }
+
+                let botFullText = responseData.answer || "";
+                let debugInfo = responseData.metadata;
+                let sourcesList = responseData.sources || [];
 
                 // Do the heavy Markdown parsing now that all text has arrived instantly
                 let finalHtml = botFullText;
@@ -192,6 +195,15 @@
                 finalHtml = finalHtml.replace(/\n\d+\.\s/g, (match) => '<br><b>' + match.trim() + '</b> ');
                 finalHtml = finalHtml.replace(/\n-\s/g, '<br>• ');
                 finalHtml = finalHtml.replace(/\n/g, '<br>');
+
+                // Append Sources if any are present
+                if (sourcesList.length > 0) {
+                    finalHtml += "<br><br><small style='color: #666;'>Sources:<br>";
+                    sourcesList.forEach((src, idx) => {
+                        finalHtml += `[${idx + 1}] ${src.document} (Score: ${src.relevance_score.toFixed(2)})<br>`;
+                    });
+                    finalHtml += "</small>";
+                }
 
                 msgDiv.innerHTML = finalHtml;
 
@@ -202,9 +214,9 @@
                         let labelColor = "#fff3cd"; // default yellow
                         let textColor = "#856404";
 
-                        if (flag.includes("[REFUSAL]") || flag.includes("[NO_CONTEXT]")) {
+                        if (flag === "refusal" || flag === "no_context") {
                             labelText = "⚠️ Low confidence — please verify with support.";
-                        } else if (flag.includes("[LOW_GROUNDING]")) {
+                        } else if (flag === "low_grounding") {
                             labelText = "⚠️ Low context - might be hallucination. Please verify.";
                         }
 
@@ -213,13 +225,10 @@
                     document.getElementById("messages").scrollTop = document.getElementById("messages").scrollHeight;
                 }
 
-                // Add bot's final text answer back into the memory array
-                chatHistory.push({ role: "assistant", content: botFullText });
-
                 // Update the debug panel exactly as requested
                 if (debugInfo) {
                     const flagsStr = debugInfo.evaluator_flags.length > 0 ? debugInfo.evaluator_flags.join(', ') : 'None';
-                    const debugStr = `Model: ${debugInfo.model_used}\nTokens (In/Out): ${debugInfo.tokens || "N/A"}\nLatency: ${debugInfo.latency_ms}ms\nEvaluator Flags: ${flagsStr}`;
+                    const debugStr = `Model: ${debugInfo.model_used}\nTokens (In/Out): ${debugInfo.tokens.input} / ${debugInfo.tokens.output}\nLatency: ${debugInfo.latency_ms}ms\nEvaluator Flags: ${flagsStr}`;
                     document.getElementById("debugPanel").innerText = debugStr;
                 }
 

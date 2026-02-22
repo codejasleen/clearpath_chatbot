@@ -30,15 +30,17 @@ def serve_frontend():
 # Make sure you set your GROQ_API_KEY environment variable!
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
-class ChatMessage(BaseModel):
-    role: str
-    content: str
+import uuid
 
-class ChatRequest(BaseModel):
-    messages: list[ChatMessage]
+# Global in-memory dictionary to store conversation history
+CONVERSATIONS: dict[str, list] = {}
+
+class QueryRequest(BaseModel):
+    question: str
+    conversation_id: str | None = None
 
 # --- LAYER 2: MODEL ROUTER ---
-def route_query(query: str) -> str:
+def route_query(query: str) -> tuple[str, str]:
     """
     Rule-based router.
     Simple queries go to llama-3.1-8b-instant.
@@ -58,9 +60,9 @@ def route_query(query: str) -> str:
     multiple_questions = query.count('?') > 1
 
     if has_complex_keyword or is_long or multiple_questions:
-        return "llama-3.3-70b-versatile"
+        return ("llama-3.3-70b-versatile", "complex")
     else:
-        return "llama-3.1-8b-instant"
+        return ("llama-3.1-8b-instant", "simple")
 
 # --- LAYER 3: OUTPUT EVALUATOR ---
 def evaluate_output(query: str, response: str, retrieved_chunks_used: int, context: str, is_complex: bool) -> list:
@@ -79,13 +81,13 @@ def evaluate_output(query: str, response: str, retrieved_chunks_used: int, conte
     ]
     is_refusal = any(kw in resp_lower for kw in refusal_keywords)
     if is_refusal:
-        flags.append("[REFUSAL] Model refused to answer or indicated lack of knowledge.")
+        flags.append("refusal")
         
     # Check 2: No-context response — the LLM answered but no relevant chunks were retrieved
     if retrieved_chunks_used == 0 and not is_refusal:
         # Only flag if the response is long enough to be a real answer (not a greeting)
         if len(response.split()) > 15:
-            flags.append("[NO_CONTEXT] No relevant documents found, but model answered from general knowledge.")
+            flags.append("no_context")
             
     # Check 3: Groundedness / Overlap Check 
     # Catch partial hallucinations (e.g. asking about Jira when only Clearpath is in docs)
@@ -101,27 +103,36 @@ def evaluate_output(query: str, response: str, retrieved_chunks_used: int, conte
             threshold = 0.6 if is_complex else 0.5
             
             if overlap_ratio < threshold:
-                flags.append(f"[LOW_GROUNDING] Response has low overlap with retrieved docs ({overlap_ratio:.0%}). Possible hallucination.")
+                flags.append("low_grounding")
         
     return flags
 
-@app.post("/chat")
-def chat_endpoint(request: ChatRequest):
+@app.post("/query")
+def query_endpoint(request: QueryRequest):
     start_time = time.time()
     
-    # Extract the very last message the user sent as the actual query
-    if not request.messages:
-        return {"error": "No messages provided"}
+    # Extract query
+    current_query = request.question
     
-    current_query = request.messages[-1].content
+    # State Management
+    cid = request.conversation_id
+    if not cid or cid not in CONVERSATIONS:
+        cid = "conv_" + str(uuid.uuid4())[:8]
+        CONVERSATIONS[cid] = []
+    
+    chat_history = CONVERSATIONS[cid]
+    chat_history.append({"role": "user", "content": current_query})
+    
+    # Restrict to last 4 messages to save tokens
+    if len(chat_history) > 4:
+        chat_history = chat_history[-4:]
     
     # --- ADVANCED: Query Condensation Layer ---
-    # Convert vague follow-ups ("only this much?") into standalone search queries using past chat history
     search_query = current_query
-    if len(request.messages) > 1:
+    if len(chat_history) > 1:
         condensation_prompt = "Given the following conversation history, rewrite the user's latest follow-up question into a single standalone search query that contains all necessary facts (like subjects or plan names) from the past messages.\nIf the latest question is already completely standalone, return it exactly as is.\nCRITICAL: If the latest question is just a conversational confirmation (like 'are you sure?', 'is this correct?', 'thanks'), DO NOT rewrite it into a factual search. Just return the exact phrase as is!\nDo NOT answer the question. ONLY return the rewritten query string.\n\nConversation History:\n"
-        for msg in request.messages[:-1]:
-            condensation_prompt += f"{msg.role.capitalize()}: {msg.content}\n"
+        for msg in chat_history[:-1]:
+            condensation_prompt += f"{msg['role'].capitalize()}: {msg['content']}\n"
             
         condensation_prompt += f"\nLatest Question: {current_query}\nStandalone Query:"
         
@@ -138,7 +149,7 @@ def chat_endpoint(request: ChatRequest):
         except Exception:
             pass # Fallback to original query
     # 1. Route the query (using the original question)
-    model_name = route_query(current_query)
+    model_name, classification = route_query(current_query)
     
     # 2. Retrieve Context (RAG) using the newly CONDENSED query!
     context, metadata = retrieve_context(search_query)
@@ -205,9 +216,7 @@ def chat_endpoint(request: ChatRequest):
     
     # 4. Compile the full conversation history
     # We append the system prompt at the very beginning of the history array
-    full_conversation_history = [system_prompt]
-    for msg in request.messages:
-        full_conversation_history.append({"role": msg.role, "content": msg.content})
+    full_conversation_history = [system_prompt] + chat_history
     
     # 5. Call LLM with the full history Non-Streaming
     try:
@@ -220,22 +229,41 @@ def chat_endpoint(request: ChatRequest):
         
         full_response = chat_completion.choices[0].message.content
         
+        # Save bot response to history array using our global dict
+        CONVERSATIONS[cid].append({"role": "assistant", "content": full_response})
+        
         # We can safely run our Evaluator function on the full response!
-        is_complex_route = (model_name == 'llama-3.3-70b-versatile')
+        is_complex_route = (classification == "complex")
         eval_flags = evaluate_output(current_query, full_response, chunks_retrieved, context, is_complex_route)
         
-        latency = round((time.time() - start_time) * 1000, 2)
+        latency = round((time.time() - start_time) * 1000)
         
-        debug_info = {
-            "evaluator_flags": eval_flags,
-            "model_used": model_name,
-            "latency_ms": latency,
-            "tokens": f"In: {chat_completion.usage.prompt_tokens} / Out: {chat_completion.usage.completion_tokens}" if hasattr(chat_completion, 'usage') else "N/A"
-        }
+        # Assemble the Sources array
+        sources_list = []
+        if metadata:
+            for meta in metadata:
+                sources_list.append({
+                    "document": meta.get("source", "Unknown"),
+                    "page": meta.get("page", 1),
+                    "relevance_score": meta.get("reranker_score", 0.99)
+                })
         
+        # Final strict JSON return schema
         return {
-            "content": full_response,
-            "trailing_eval": debug_info
+            "answer": full_response,
+            "metadata": {
+                "model_used": model_name,
+                "classification": classification,
+                "tokens": {
+                    "input": chat_completion.usage.prompt_tokens if hasattr(chat_completion, 'usage') else 0,
+                    "output": chat_completion.usage.completion_tokens if hasattr(chat_completion, 'usage') else 0
+                },
+                "latency_ms": latency,
+                "chunks_retrieved": chunks_retrieved,
+                "evaluator_flags": eval_flags
+            },
+            "sources": sources_list,
+            "conversation_id": cid
         }
 
     except Exception as e:
