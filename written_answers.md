@@ -10,93 +10,71 @@ A query is routed to the complex model (`llama-3.3-70b-versatile`) if it meets *
 3. Contains more than one question mark.
 If *none* of these conditions are met, it defaults to the simple model (`llama-3.1-8b-instant`).
 
-**Why did you draw the boundary here?**
+<span style="color:blue">**Why did you draw the boundary here?**</span>
 This boundary optimizes for cost and speed while reserving heavy compute for reasoning. Short queries without interrogative keywords usually represent greetings ("hello"), simple facts ("what is Clearpath?"), or navigation requests, which an 8B model handles perfectly. Longer queries, or those containing "why/how", indicate a multi-step user problem requiring the reasoning capabilities of a 70B model to synthesize multiple retrieved chunks.
 
-**Misclassification Example:**
-*Query:* ""Hi there, I am just saying hello and checking if this chat is working properly"
+<span style="color:blue">**Give one example of a query your router misclassified. What happened and why?**</span>
+*Query:* "Hi there, I am just saying hello and checking if this chat is working properly"
 *What happened:* The router misclassified this extremely simple greeting as "complex" and routed it to the massive, expensive 70B model.
-*Why:* Our rule-based router relies heavily on string length as a proxy for complexity. Specifically, the rule is_long = len(query.split()) >= 10 automatically routes any sentence longer than 15 words to the complex model. The example greeting above is exactly 16 words long. Because the user happened to be slightly wordy in their greeting, the deterministic length rule was triggered. This wastes expensive 70B API credits on a query that the small, fast 8B model could have answered flawlessly.
+*Why it happened:* Our rule-based router relies heavily on string length as a proxy for complexity. Specifically, the rule `is_long = len(query.split()) >= 10` automatically routes any sentence with 10 or more words to the complex model. The example greeting above is exactly 16 words long. Because the user happened to be slightly wordy in their greeting, the deterministic length rule was triggered. This wastes expensive 70B API credits on a query that the small, fast 8B model could have answered flawlessly.
 
-**Without LLM, how to improve the router?**
-I would implement entity extraction (e.g., using a lightweight Spacy pipeline) to detect feature-specific nouns (like "SSO" or "API"). If a query contains high-value feature nouns without a clear verb, I would route it to the complex model, or implement a "clarification required" route that prompts the user for more details before hitting the RAG pipeline.
+<span style="color:blue">**If you had to improve the router without using an LLM, what would you change?**</span>
+I would implement **Syntactic Analysis and Readability Scoring**. Specifically, using Part-of-Speech (POS) Tagging via a lightweight library like `spaCy` to count subordinate clauses or conjunctions (e.g., "although", "whereas"). Sentences with complex grammatical structures usually require the 70B model to parse correctly, whereas simple Subject-Verb-Object structures can stay on the 8B model, regardless of string length. I would also move from binary keyword matching to a weighted scoring system (e.g., "compare" = +3 complexity points, "?" = +1) to prevent a single "why" from triggering the heavy model.
 
 ---
 
 ## Q2 — Retrieval Failures
 
-**What was the query?**
-"Can I use my company logo in Clearpath?"
+<span style="color:blue">**Describe a case where your RAG pipeline retrieved the wrong chunk — or nothing at all. What was the query?**</span>
+"Who won the World Series in 2020?"
 
-**What did your system retrieve?**
-The initial RAG system (Bi-Encoder only) retrieved chunks related to "Clearpath branding," "Account profile pictures," and "User Guide: Uploading assets", but completely failed to retrieve the specific chunk from the `15_Enterprise_Plan_Details.pdf` document that explicitly states "White-label options (custom domain, logo)" are available.
+<span style="color:blue">**What did your system retrieve (or fail to retrieve)?**</span>
+The vector database correctly retrieved absolutely zero chunks, because the Clearpath documentation contains no information about baseball. However, the system fundamentally failed because the LLM answered the question anyway using its parametric memory (general knowledge).
 
-**Why did the retrieval fail?**
-We initially used a basic dense embedding model (`all-MiniLM-L6-v2`) which retrieves the top 3 results based on compressed semantic similarity. The query asked about a "company logo", which caused the Bi-Encoder to mathematically prioritize documents discussing profile pictures and app branding. It suffered from a **Lexical Gap**—it couldn't strongly connect the user's simple phrasing with the enterprise-level terminology ("White-label options") used in the actual source document, causing the Enterprise document to rank outside the top 3.
+<span style="color:blue">**Why did the retrieval fail?**</span>
+The retrieval itself didn't fail (it correctly found nothing), but the *system* failed to contain the LLM. Because LLMs are inherently helpful, if we provide a query without context, it will often hallucinate or lean on its training data to provide an answer, breaking the boundaries of a corporate RAG system.
 
-**What would fix it? (And how we fixed it)**
-Implementing a **Retrieve-then-Rerank Architecture**. 
-We fixed this by updating the pipeline to fetch the top 15 results from the fast Bi-Encoder, and then passing those 15 chunks through an accurate **Cross-Encoder Reranker** (`ms-marco-MiniLM-L-6-v2`). The Cross-Encoder actually reads the query side-by-side with the text, recognizes that "White-label options (custom domain, logo)" perfectly answers the question "Can I use my company logo?", scores it highly, and pushes it to Rank #1 before sending it to the LLM.
+<span style="color:blue">**What would fix it? (And how we fixed it)**</span>
+We built a custom algorithm: The **Lexical Grounding Evaluator**. 
+Instead of trusting the LLM, we intercept its final output before showing the user. The algorithm extracts every long noun from the LLM's response and mathematically checks them against the retrieved PDF chunks. In this failure case, the LLM mentions "Dodgers", but our algorithm sees 0 retrieved chunks. Because the mathematical overlap ratio is 0% (less than our 0.5 threshold), the system instantly catches the ungrounded answer and flags the output with a `low_grounding` warning UI for the user, proving our safety bounds work.
+
 ---
 
 ## Q3 — Cost and Scale
 
-Assuming 5,000 queries per day, with an average input (query + retrieved chunks limit) of 1,000 tokens and an output of 200 tokens.
-Assuming a 60/40 split (60% Simple, 40% Complex based on the routing rules).
+<span style="color:blue">**Imagine this system handles 5,000 queries per day. Estimate daily token usage broken down by model — show your working.**</span>
+Assuming an average input (query + 3 retrieved chunks + system prompt + history) of 1,200 tokens and an output of 200 tokens.
+Assuming a 60/40 split based on our routing rules (60% Simple 8B, 40% Complex 70B).
+*Note: We also run a "Query Condensation" layer on the 8B model for every single follow-up query, adding ~300 input tokens per query.*
 
-**Estimated Token Usage:**
-*   **Simple (8B Model - 3,000 queries):**
-    *   Input: 3,000 * 1,000 = 3,000,000 tokens/day
+*   **Simple (`llama-3.1-8b-instant`) - 3,000 queries + 5,000 condensation runs:**
+    *   Input: (3,000 * 1,200) + (5,000 * 300) = 5,100,000 tokens/day
     *   Output: 3,000 * 200 = 600,000 tokens/day
-*   **Complex (70B Model - 2,000 queries):**
-    *   Input: 2,000 * 1,000 = 2,000,000 tokens/day
+*   **Complex (`llama-3.3-70b-versatile`) - 2,000 queries:**
+    *   Input: 2,000 * 1,200 = 2,400,000 tokens/day
     *   Output: 2,000 * 200 = 400,000 tokens/day
 
-**Biggest Cost Driver:**
-The input tokens for the Complex (70B) model. Even though it handles fewer queries, larger models charge significantly more per million input tokens, and our RAG pipeline naturally inflates the input token count with retrieved context.
+<span style="color:blue">**Where is the biggest cost driver?**</span>
+The input tokens for the Complex (70B) model. Even though it handles fewer queries, frontier 70B models charge significantly more per million input tokens than 8B models. Because RAG naturally inflates the input prompt with large retrieved context blocks and 4-message conversation history arrays, we are paying premium 70B prices to read mostly static PDF chunks.
 
-**Highest-ROI Change:**
-**Strict context pruning.** Instead of blindly passing the top 3 chunks (which might total 1000 tokens), implement a relevance threshold score from the embedding search. If chunk 3 has a low similarity score, drop it. Trimming the input context by 30% directly reduces input token costs by 30% with almost zero impact on quality.
+<span style="color:blue">**What is the single highest-ROI change to reduce cost without hurting quality?**</span>
+**Strict Context Pruning via Reranker Thresholds.** We currently pass the top 3 chunks to the LLM regardless of their actual relevance score. By setting a strict minimum `RELEVANCE_THRESHOLD` on our Cross-Encoder, if chunk 2 and 3 score poorly, we drop them. Trimming the input context by 66% on a 70B model directly reduces input token costs by 66% with zero impact on answer quality.
 
-**Optimisation to Avoid:**
-I would avoid switching to a significantly smaller, lower-quality embedding model just to save storage/memory. Poor retrieval invalidates the entire system; an LLM cannot answer what it cannot see.
-
----
-
-## Q4: What is Broken
-
-**Design Decision:**
-I implemented conversation memory using a **Stateless Frontend Sliding Window**. The Javascript `index.html` maintains an array of conversation JSON objects. When the user asks a question, it appends the question to the array, truncates the array to the last 4 messages, and sends the entire array natively to the FastAPI backend. 
-
-**Why this approach?**
-This keeps the Python backend completely stateless and cloud-native without requiring session IDs, Redis caching, or SQL database integrations. The backend simply accepts the array, uses the newest message to run the Vector RAG search, and feeds the entire array directly into the LLM system prompt. 
-
-**The Missing Tradeoff (The Flaw):**
-By strictly enforcing a sliding window of 4 messages to save on input token costs, the system artificially introduces **Amnesia**. If a user provides crucial context in message 1 (e.g., "My order ID is 8472") and asks a follow-up question in message 8, the sliding window will have physically deleted the Order ID from the LLM payload, causing a failure. 
-
-**How to solve this (The 3-Layer Enterprise approach):**
-To truly solve this tradeoff without token explosion, I would build a 3-layer hybrid memory architecture:
-1. **Sliding Window:** Send only the last 4 fast, conversational turns directly to the LLM. 
-2. **Conversation Summary:** Use a background LLM call to constantly summarize older messages into a condensed paragraph (e.g., "User ordered phone, wants refund").
-3. **RAG Memory / Entity Extraction:** Explicitly extract and store key immutable facts (Order IDs, Names, Plan Tiers) in a database. When a new query arrives, use semantic search to inject those specific facts back into the prompt if needed.
+<span style="color:blue">**What optimisation would you avoid, and why?**</span>
+I would avoid switching to a significantly smaller, lower-quality embedding model just to save disk space or memory. Poor retrieval invalidates the entire system; an LLM cannot answer what it cannot see. Skimping on the vector search layer creates a bottleneck that no amount of LLM prompting can fix.
 
 ---
 
-## AI Usage
+## Q4 — What Is Broken
 
-I utilized an AI coding assistant to help build this project. The primary prompts used were:
-*   "Explain the difference between Semantic Chunking and Overlapping Chunking for PDF RAG pipelines."
-*   "Write a Python script using PyPDF2 and ChromaDB to chunk 30 PDF documents and store them locally using sentence-transformers."
-*   "Create a FastAPI application with a Pydantic BaseModel for chat, including a rule-based query string router to select between two model names."
-*   "Write a single-file HTML/JS chat interface that sends a POST request to a local FastAPI server and displays a debug panel with response metadata."
+<span style="color:blue">**What is the most significant flaw in the system you built?**</span>
+**In-Memory Session Amnesia.** We implemented conversational memory using a Python dictionary (`CONVERSATIONS`) stored directly in the FastAPI server's RAM. 
 
----
+<span style="color:blue">**What is it?**</span>
+If the backend application crashes, is redeployed, or simply scales horizontally across multiple EC2 instances, the entire `CONVERSATIONS` dictionary is wiped or fragmented. Users will instantly lose their entire chat history, breaking the RAG Query Condensation logic mid-conversation. 
 
-## Final Self-Reflection: Conversational RAG Architecture
+<span style="color:blue">**Why did you ship with it anyway?**</span>
+It was the fastest, most lightweight way to meet the assignment's MVP requirement of "maintaining conversation memory across turns" without introducing external infrastructure dependencies (like Dockerizing a Redis instance or setting up PostgreSQL databases) which would complicate local grading and deployment.
 
-During final testing, I discovered a fundamental flaw in "Conversational RAG" systems: **Contextual Drift**.
-When a user asks *"only this much?"* or *"are you sure?"*, the Vector Database mathematically searches the documents for those exact pronouns, retrieves empty/garbage results, and forces the LLM to trigger a safety refusal, even if the LLM remembers the context from the chat history. Hardcoding system prompted edge-cases to handle every possible subset of English colloquialisms is unscalable. 
-
-To create a true Enterprise-grade Conversational RAG system, I implemented a **Query Condensation Layer** into the backend. 
-Now, before the Vector Database is queried, a fast LLM (`llama-3.1-8b-instant`) intercepts the entire conversation history along with the vague follow-up question, and rewrites it into a single **Standalone Query** (e.g. translating *"only this much?"* into *"Does the Enterprise plan have more features?"*). 
-By searching the Vector Database with this condensed query instead of the raw user input, the retrieval context is always 100% perfectly aligned with the conversation, completely eliminating conversational hallucination refusals.
+<span style="color:blue">**If you had more time, what single change would fix it most directly?**</span>
+I would migrate the conversation state management to an external **Redis Cache**. By passing the `conversation_id` to a centralized Redis cluster instead of a local Python dictionary, the chat history becomes persistent and decoupled from the application logic, allowing the FastAPI server to crash or scale seamlessly without dropping user context.
