@@ -196,7 +196,8 @@
                 finalHtml = finalHtml.replace(/\n-\s/g, '<br>• ');
                 finalHtml = finalHtml.replace(/\n/g, '<br>');
 
-                // Append Sources if any are present
+                // Append Sources if any are present (Commented out per user request, but still exists in backend JSON)
+                /*
                 if (sourcesList.length > 0) {
                     finalHtml += "<br><br><small style='color: #666;'>Sources:<br>";
                     sourcesList.forEach((src, idx) => {
@@ -204,6 +205,7 @@
                     });
                     finalHtml += "</small>";
                 }
+                */
 
                 msgDiv.innerHTML = finalHtml;
 
