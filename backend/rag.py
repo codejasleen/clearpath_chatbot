@@ -139,8 +139,9 @@ def retrieve_context(query, top_k=3):
         scored_results = sorted(zip(scores, retrieved_docs, retrieved_metadatas), key=lambda x: x[0], reverse=True)
         
         # Filter out chunks below a minimum relevance score
-        # This ensures truly off-topic queries (e.g. "What is Kubernetes?") return 0 chunks
-        RELEVANCE_THRESHOLD = 0.0
+        # Cross-encoders output "logits", which can be negative (e.g., -1.5) even for valid fuzzy matches (like typos).
+        # We use -2.0 to allow for typos but still reject completely off-topic queries.
+        RELEVANCE_THRESHOLD = -2.0
         relevant_results = [(s, d, m) for s, d, m in scored_results if s >= RELEVANCE_THRESHOLD]
         best_results = relevant_results[:top_k]
         
