@@ -1,6 +1,11 @@
 # Clearpath Chatbot Support System
 
-This project is a functional, testable customer support chatbot for "Clearpath", a fictional project management SaaS. It implements a fully local RAG (Retrieval-Augmented Generation) pipeline, a deterministic model router, and an output evaluator to ensure safe and accurate responses from the LLM.
+This project is a functional, production-ready customer support chatbot for "Clearpath", a fictional project management SaaS. It implements an advanced RAG (Retrieval-Augmented Generation) pipeline, a deterministic model router, and an output evaluator to ensure safe and accurate responses from the LLM.
+
+### 🌐 Live Deployment
+The project is currently deployed and accessible at: **http://13.49.75.239**
+
+---
 
 ## How to Run the Project Locally
 
@@ -12,7 +17,7 @@ This project is a functional, testable customer support chatbot for "Clearpath",
 Clone this repository and navigate to the project root:
 ```bash
 # Create and activate a Virtual Environment
-python -m venv venv
+python3 -m venv venv
 
 # On Windows:
 .\venv\Scripts\Activate.ps1
@@ -20,11 +25,11 @@ python -m venv venv
 source venv/bin/activate
 
 # Install the dependencies
-pip install fastapi uvicorn groq chromadb sentence-transformers pydantic pypdf2 python-multipart
+pip install fastapi uvicorn groq chromadb sentence-transformers pydantic pypdf2 python-dotenv python-multipart
 ```
 
-**2. Set up the API Key**
-You must set your Groq API key as an environment variable:
+**2. Set up the Environment Variables**
+Create a `.env` file in the root directory or export the variable directly:
 ```bash
 # On Windows (PowerShell):
 $env:GROQ_API_KEY="your-api-key"
@@ -33,37 +38,43 @@ $env:GROQ_API_KEY="your-api-key"
 export GROQ_API_KEY="your-api-key"
 ```
 
-**3. Build the Vector Database (Layer 1)**
-Run the RAG extraction script to process the 30 PDF documents in the `docs/` folder, chunk them, create local embeddings, and store them in a local ChromaDB folder.
+**3. Start the Backend Server**
+The backend `main.py` is configured to handle the `/query` endpoint and serve the frontend statically.
+Run the startup command from the root directory:
 ```bash
-python backend/rag.py
+python -m uvicorn backend.main:app --reload
 ```
-*(Note: This might take a minute on the first run as it downloads the local embedding model).*
+The server will now be running at `http://localhost:8000`.
 
-**4. Start the Backend API Server**
-Start the FastAPI server:
-```bash
-uvicorn backend.main:app --reload
-```
-The server will be running at `http://127.0.0.1:8000`.
-
-**5. Open the Chat Interface**
-Using your standard file explorer, navigate to the `frontend/` folder and double-click the `index.html` file to open it in your web browser. 
-Type a message and click "Send"!
+**4. Access the Chat Interface**
+Open your web browser and go to `http://localhost:8000`. The frontend interface is served directly from the backend. Type a message and hit "Send"!
 
 ---
 
-## Groq Models Used
+## Groq Models & Environment Config
 
-This project utilizes two models via the Groq API, selected dynamically by the `router.py` logic:
+This project utilizes two models via the Groq API. Queries are routed dynamically by the rule-based logic in `main.py` to balance cost, speed, and reasoning capabilities:
 
-1.  **Simple Queries:** `llama-3.1-8b-instant` 
-    *   *Used for greetings, short questions, and single-fact lookups.*
-2.  **Complex Queries:** `llama-3.3-70b-versatile`
-    *   *Used for queries containing interrogative words (why/how/explain), error reports, or multi-step questions.*
+1. **Simple Queries:** `llama-3.1-8b-instant`
+   * *Used for greetings, short questions, and single-fact lookups. Also used for the Query Condensation step.*
+2. **Complex Queries:** `llama-3.3-70b-versatile`
+   * *Used for queries containing interrogative words (why/how/explain), multi-step questions, or queries exceeding 10 words.*
 
-## Known Limitations & Missing Features
+**Environment Config:** The application simply requires the `GROQ_API_KEY` to be set in the environment.
 
-1.  **Conversational Memory (Statelessness):** The system currently does not retain context from previous turns in the conversation. Each query is treated as an isolated event. Asking "How do I do X?" followed by "What about Y?" will fail because the model loses the context of "X".
-2.  **Streaming Answers:** Streaming was not implemented; the user must wait for the entire generation process (retrieval + LLM inference) to finish before seeing the response.
-3.  **Basic Embedding Model:** We use a small, dense embedding model (`all-MiniLM-L6-v2`). While fast and local, it relies heavily on semantic similarity and can miss exact keyword matches. A combination of dense and sparse vectors (Hybrid search via BM25) would drastically improve retrieval accuracy for hyper-specific UI button names or error codes.
+---
+
+## Bonus Challenges Attempted
+
+1. **Conversational Memory with Query Condensation:** Implemented an active sliding-window memory (last 4 messages) managed by a backend session dictionary. Importantly, to make this work with the vector database, I implemented a **Query Condensation Layer** using the 8B model. It intercepts follow-up questions containing pronouns (e.g., "Are you sure about it?") and rewrites them into standalone search queries before hitting ChromaDB.
+2. **Advanced Two-Stage Retrieval (Reranking):** Upgraded from standard dense retrieval to a two-stage pipeline. ChromaDB first fetches the top 15 chunks using `all-MiniLM-L6-v2`, and then a powerful Neural **Cross-Encoder model** (`ms-marco-MiniLM-L-6-v2`) reranks them mathematically, returning only the top 3 most precisely relevant chunks. I also tuned the negative logits threshold to allow for typo tolerance.
+3. **Lexical Grounding Evaluator:** Built a custom algorithmic hallucination checker. Before returning the final answer, the system extracts all long nouns from the LLM's response and verifies that at least 50% of them actually exist in the retrieved PDF chunks. If an LLM hallucinates new features not found in the manuals, it perfectly flags the output with `low_grounding`.
+4. **AWS Deployment:** Fully deployed the backend and frontend on an AWS EC2 instance.
+
+---
+
+## Known Issues & Limitations
+
+1. **In-Memory State Management:** The conversation history is currently stored in a Python dictionary (`CONVERSATIONS`) inside the server memory. While fast, this means that if the server crashes or restarts, all active user conversational histories are lost. In a real production system, this would be moved to Redis or a database.
+2. **No Streaming:** Output streaming was purposely disabled in favor of strict JSON responses (`/query`) to ensure the frontend could confidently parse the structured evaluator warnings (`metadata.flags`) without complex stream chunk parsing. This increases perceived latency for the user.
+3. **Cross-Encoder Latency "Cold Start":** Because the Cross-Encoder model runs locally on CPU (especially noticeable on the EC2 instance without a GPU), the very first query takes slightly longer as PyTorch loads the model into active memory.
