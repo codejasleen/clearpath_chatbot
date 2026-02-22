@@ -97,8 +97,8 @@ def evaluate_output(query: str, response: str, retrieved_chunks_used: int, conte
             overlap_count = sum(1 for word in words_in_response if word in context_lower)
             overlap_ratio = overlap_count / len(words_in_response)
             
-            # User requested 60% threshold for complex queries
-            threshold = 0.6 if is_complex else 0.2
+            # Increased threshold for 8B since Query Condensation handles conversational context
+            threshold = 0.6 if is_complex else 0.5
             
             if overlap_ratio < threshold:
                 flags.append(f"[LOW_GROUNDING] Response has low overlap with retrieved docs ({overlap_ratio:.0%}). Possible hallucination.")
