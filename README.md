@@ -79,7 +79,8 @@ According to the optional Bonus Challenges rubric, the following three challenge
 Beyond the assignment rubric, several advanced RAG concepts were engineered to ensure production-grade reliability:
 
 1. **Advanced Two-Stage Retrieval (Reranking):** Upgraded from standard dense retrieval to a two-stage pipeline. ChromaDB first fetches the top 15 chunks using `all-MiniLM-L6-v2`, and then a powerful Neural **Cross-Encoder model** (`ms-marco-MiniLM-L-6-v2`) reranks them mathematically, returning only the top 3 most precisely relevant chunks. I also tuned the negative logits threshold to allow for typo tolerance.
-2. **Lexical Grounding Flagging:** Built a custom algorithmic hallucination checker. Before returning the final answer, the system extracts all long nouns from the LLM's response and verifies that at least 50% of them actually exist in the retrieved PDF chunks. If an LLM hallucinates new features not found in the manuals, it perfectly flags the output with `low_grounding`.
+2. **Lexical Grounding Flagging:** Built a custom algorithmic hallucination checker. Before returning the final answer, the system extracts all long nouns from the LLM's response and verifies that at least 50% (for simple models) to 60% (for complex models) of them actually exist in the retrieved PDF chunks. If an LLM hallucinates new features not found in the manuals, it perfectly flags the output with `low_grounding`.
+3. **Query Condensation Layer:** Built an LLM-powered query rewrite step using the fast 8B model. When a user asks a follow-up question containing pronouns or implicit context (e.g., "how much does it cost?"), the condensation layer rewrites the query using the entire conversation history into a standalone, search-optimized string (e.g., "what is the price of the enterprise plan?"). This dramatically improves vector semantic similarity matching for multi-turn conversations.
 
 ---
 
